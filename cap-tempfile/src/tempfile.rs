@@ -34,6 +34,7 @@ use std::io::{Read, Seek};
 ///
 /// [`tempfile::NamedTempFile`]: https://docs.rs/tempfile/latest/tempfile/struct.NamedTempFile.html
 /// [`File::create_new`]: https://doc.rust-lang.org/std/fs/struct.OpenOptions.html#method.create_new
+#[derive(Debug)]
 pub struct TempFile<'d> {
     dir: &'d Dir,
     fd: File,
