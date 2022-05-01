@@ -4,6 +4,7 @@ use cap_std::fs::{Dir, File};
 use std::ffi::OsStr;
 use std::io::{self, Write};
 use std::io::{Read, Seek};
+use std::path::Path;
 
 /// A file in a directory that is by default deleted when it goes out
 /// of scope, but may also be written persistently.
@@ -125,7 +126,7 @@ impl<'d> TempFile<'d> {
         &mut self.fd
     }
 
-    fn impl_replace(mut self, destname: &OsStr) -> io::Result<()> {
+    fn impl_emplace(mut self, destname: &OsStr, overwrite: bool) -> io::Result<()> {
         // At this point on Linux if O_TMPFILE is used, we need to give the file a temporary name in
         // order to link it into place.  There are patches to add an `AT_LINKAT_REPLACE`
         // API.  With that we could skip this and have file-leak-proof atomic file replacement:
@@ -139,13 +140,21 @@ impl<'d> TempFile<'d> {
         // SAFETY: We only support anonymous files on Linux, so the file must have a name here.
         #[cfg(not(any(target_os = "android", target_os = "linux")))]
         let tempname = self.name.take().unwrap();
-        // And try the rename into place.
-        self.dir.rename(&tempname, self.dir, destname).map_err(|e| {
-            // But, if we catch an error here, then move ownership back into self,
-            // which means the Drop invocation will clean it up.
+        if overwrite {
+            // And try the rename into place.
+            self.dir.rename(&tempname, self.dir, destname).map_err(|e| {
+                // But, if we catch an error here, then move ownership back into self,
+                // which means the Drop invocation will clean it up.
+                self.name = Some(tempname);
+                e.into()
+            })
+        } else {
+            let e = self.dir.hard_link(&tempname, self.dir, destname);
+            // In the non-overwrite case, we always want to retain a reference, so that the original
+            // reference is unlink()'d in our Drop.
             self.name = Some(tempname);
-            e.into()
-        })
+            e
+        }
     }
 
     /// Write the file to the target directory with the provided name.
@@ -154,7 +163,18 @@ impl<'d> TempFile<'d> {
     /// The file permissions will default to read-only.
     pub fn replace(self, destname: impl AsRef<OsStr>) -> io::Result<()> {
         let destname = destname.as_ref();
-        self.impl_replace(destname)
+        self.impl_emplace(destname)
+    }
+
+    /// Write the file to the target directory with the provided name.
+    /// If there is an extant file, an error will be returned.
+    ///
+    /// The file permissions will default to read-only.
+    ///
+    /// This is roughly equivalent to [`tempfile::NamedTempfile::persist_noclobber`].
+    pub fn persist_noclobber(self, destname: impl AsRef<OsStr>) -> io::Result<()> {
+        let destname = destname.as_ref();
+        self.impl_emplace(destname)
     }
 }
 
